@@ -34,7 +34,7 @@ helm_image_tag = get_env(tag_name,"1.0")
 puts("tag_name: #{tag_name} helm_image_tag: #{helm_image_tag}")
 
 helm_namespace =  get_env('HELM_NAMESPACE',"dev")
-helm_kube_context =  get_env('HELM_KUBE_CONTEXT',"admin")
+helm_kube_context =  get_env('HELM_KUBE_CONTEXT',"1a.k8sdemo.iplops.je-labs.com")
 helm_name =  get_env('HELM_NAME','unknown')
 timeout = get_env("TIMEOUT",120)
 sleep_time = get_env("SLEEP_TIME",5)
