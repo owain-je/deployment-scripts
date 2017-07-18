@@ -23,7 +23,7 @@ def build_set_overrides()
   return rtn
 end
 
-helm_chart_repo = get_env('HELM_CHART_REPO',"https://github.com/owain-je/charts/")
+helm_chart_repo = get_env('HELM_CHART_REPO',"https://owain-je.github.io/charts/")
 helm_chart_name = get_env('HELM_CHART_NAME',"je-charts/piapp")
 helm_chart_version = get_env('HELM_CHART_VERSION',"0.1.0")
 
