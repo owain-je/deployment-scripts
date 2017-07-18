@@ -19,7 +19,7 @@ def build_set_overrides()
        rtn += " --set #{v} "
     end
   end
-
+  puts("RTN #{rtn}")
   return rtn
 end
 
