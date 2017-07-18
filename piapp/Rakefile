@@ -15,7 +15,9 @@ end
 def build_set_overrides()
   rtn = ""
   ENV.to_h.each do |k,v|  
+    
     if(k.include?("SET_"))
+       puts("V: #{v}")
        rtn += " --set #{v} "
     end
   end
