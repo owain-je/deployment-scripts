@@ -35,6 +35,9 @@ helm_chart_version = get_env('HELM_CHART_VERSION',"0.1.0")
 tag_name = get_env('TAGNAME',"GO_PIPELINE_LABEL")
 helm_image_tag = get_env(tag_name,"1.0")
 
+schema_tag_name = get_env('SCHEMATAG',"GO_DEPENDENCY_LABEL_SCHEMA")
+helm_schema_image_tag = get_env(schema_tag_name,"11")
+
 puts("tag_name: #{tag_name} helm_image_tag: #{helm_image_tag}")
 
 helm_namespace =  get_env('HELM_NAMESPACE',"dev")
@@ -206,7 +209,7 @@ end
 
 task :helm_upgrade do 
   log("Running helm upgrade") 
-  execute_cmd("helm upgrade -i #{helm_name}  #{helm_chart_name} --version #{helm_chart_version} --set image.tag=#{helm_image_tag} --namespace #{helm_namespace} --kube-context #{helm_kube_context} #{set_commandline} --wait --timeout #{timeout}")
+  execute_cmd("helm upgrade -i #{helm_name}  #{helm_chart_name} --version #{helm_chart_version} --set schema.tag=#{helm_schema_image_tag}  --set image.tag=#{helm_image_tag} --namespace #{helm_namespace} --kube-context #{helm_kube_context} #{set_commandline} --wait --timeout #{timeout}")
 end
 
 task :get_deployment_status do 
