@@ -46,7 +46,7 @@ helm_name =  get_env('HELM_NAME','unknown')
 timeout = get_env("TIMEOUT",120)
 sleep_time = get_env("SLEEP_TIME",5)
 set_commandline = build_set_overrides()
-iterations = get_env("ITERATIONS",5)
+iterations = get_env("ITERATIONS",5).to_i
 
 module Utils
 
