@@ -1,0 +1,231 @@
+require 'open3'
+require 'fileutils'
+require 'json'
+require 'etc'
+require 'yaml'
+
+
+def get_env(env_name,default_value)
+  if(ENV[env_name].to_s != '')
+    return ENV[env_name]
+  end
+  return default_value
+end
+
+def build_set_overrides()
+  rtn = ""
+  ENV.to_h.each do |k,v|  
+    
+    if(k.include?("SET_"))
+       if(!v.include?("yes"))
+        rtn += " --set #{v} "
+      end
+    end
+  end
+  puts("RTN #{rtn}")
+  return rtn
+end
+
+helm_chart_repo = get_env('HELM_CHART_REPO',"https://owain-je.github.io/charts/")
+helm_repo_name = get_env('HELM_REPO_NAME',"je-charts")
+helm_chart_name = get_env('HELM_CHART_NAME',"#{helm_repo_name}/piui")
+helm_chart_version = get_env('HELM_CHART_VERSION',"0.1.0")
+
+#use an environment variable to find the version number or default to go pipeline label
+tag_name = get_env('TAGNAME',"GO_PIPELINE_LABEL")
+helm_image_tag = get_env(tag_name,"1.0")
+
+schema_tag_name = get_env('SCHEMATAG',"GO_DEPENDENCY_LABEL_SCHEMA")
+helm_schema_image_tag = get_env(schema_tag_name,"11")
+
+puts("tag_name: #{tag_name} helm_image_tag: #{helm_image_tag}")
+
+helm_namespace =  get_env('HELM_NAMESPACE',"dev")
+helm_kube_context =  get_env('HELM_KUBE_CONTEXT',"1a.k8sdemo.iplops.je-labs.com")
+helm_name =  get_env('HELM_NAME','unknown')
+timeout = get_env("TIMEOUT",120)
+sleep_time = get_env("SLEEP_TIME",5)
+set_commandline = build_set_overrides()
+iterations = get_env("ITERATIONS",5).to_i
+
+module Utils
+
+  class Subprocess
+    def initialize(cmd, &block)
+      Open3.popen3(cmd) do |stdin, stdout, stderr, thread|
+        { :out => stdout, :err => stderr }.each do |key, stream|
+          Thread.new do
+            until (line = stream.gets).nil? do
+              if key == :out
+                yield line, nil, thread if block_given?
+              else
+                yield nil, line, thread if block_given?
+              end
+            end
+          end
+        end
+        thread.join # don't exit until the external process is done
+        exit_code = thread.value
+		if(exit_code != 0)
+			puts("Failed to execute_cmd #{cmd} exit code: #{exit_code}")
+			Kernel.exit(false)
+		end
+      end
+    end
+  end
+end
+
+class Pod
+
+  def initialize(options)
+    @options = options
+  end
+
+  def deployment_success(results)
+    success = true
+    max_restart = 3
+    results.each do |k,v| 
+      if(v['restartCount'].to_i > max_restart)
+        success = false
+      end
+      if(v['ready'] == false)
+         success = false
+      end
+    end
+    return success
+  end
+
+  def get_pods()
+    #puts("kubectl get pods -l=release=#{@options['helm_name']} #{@options['namespace']} #{@options['context']} -o yaml")
+    pods_yaml = `kubectl get pods -l=release=#{@options['helm_name']} #{@options['namespace']} #{@options['context']} -o yaml`
+    pods = YAML.load( pods_yaml) 
+  end
+
+  def display_pod_logs(pod_name,container_name)
+      log("Pod logs for #{pod_name} #{container_name}")
+      log(`kubectl logs  #{@options['context']} #{@options['namespace']} #{pod_name} #{container_name}`)
+      log("")
+  end
+
+  def is_pod_deployment_successful()
+    
+    log("--- is_pod_deployment_successful ---")  
+    result = {}
+    iteration = 0
+    success = false
+    while iteration < @options['max_iterations'] do 
+      log("iteration: #{iteration}")
+      pods = get_pods()
+      pods['items'].each do |pod|    
+        log("\tpod name: #{pod['metadata']['name']}")
+        result["#{pod['metadata']['name']}"]={}
+        pod['status']['containerStatuses'].each do |container|
+          result["#{pod['metadata']['name']}"]["ready"] = container['ready']
+          result["#{pod['metadata']['name']}"]["restartCount"] = container['restartCount']
+          log("\t\tcontainer: #{container['name']} ready: #{container['ready']} restartCount: #{container['restartCount']}")
+          display_pod_logs(pod['metadata']['name'],container['name'])
+        end
+
+      end
+      iteration = iteration +1
+      success = deployment_success(result)
+      log("\tfinal result: #{success}")
+      if(success)
+        break
+      else
+        sleep(@options['sleep_time'])  
+      end    
+    end
+    return success
+  end
+
+end
+
+def execute_cmd(cmd,chdir=File.dirname(__FILE__))
+	log("execute_cmd: #{cmd}")	
+	Utils::Subprocess.new cmd do |stdout, stderr, thread|
+  		log "\t#{stdout}"
+  		if(stderr.nil? == false)
+  			log "\t#{stderr}"	
+  		end
+	end
+end
+
+
+def is_automated_build()
+	return (ENV['GO_PIPELINE_LABEL'].nil? == false)
+end
+
+def log(msg)
+  puts("#{msg}\n")
+end
+
+
+def get_context()
+   if (ENV["HELM_KUBE_CONTEXT"].to_s != '')
+    return "--context #{ENV["HELM_KUBE_CONTEXT"]}"
+   end
+end
+
+def get_namespace()
+   if (ENV["HELM_NAMESPACE"].to_s != '')
+    return "--namespace #{ENV["HELM_NAMESPACE"]}"
+   end
+end
+
+def create_label_param(labels)
+  rtn = ""
+  labels.each do |key, value|
+      rtn +=  " -l #{key}=#{value} "
+    end
+    return rtn
+end
+
+def get_pod_by_label(labels)
+  label_param = create_label_param(labels)
+  cmd = "kubectl get pods #{get_namespace()} #{get_context()} -a #{label_param} -o yaml "
+  pods = `#{cmd}`  
+  return YAML.load(pods)
+end
+
+def get_env(env_name,default_value)
+  if(ENV[env_name].to_s != '')
+    return ENV[env_name]
+  end
+  return default_value
+end
+
+task :default => [:setup_helm, :helm_upgrade, :get_status, :get_deployment_status]
+
+task :setup_helm do 
+  execute_cmd("helm init --client-only")
+  execute_cmd("helm repo add #{helm_repo_name} #{helm_chart_repo}")
+  execute_cmd("helm repo update")
+end
+
+task :get_status do 
+  execute_cmd("kubectl get pods --namespace  #{helm_namespace} --context #{helm_kube_context} ")
+end 
+
+task :helm_upgrade do 
+  log("Running helm upgrade") 
+  execute_cmd("helm upgrade -i #{helm_name}  #{helm_chart_name} --version #{helm_chart_version} --set schema.tag=#{helm_schema_image_tag}  --set image.tag=#{helm_image_tag} --namespace #{helm_namespace} --kube-context #{helm_kube_context} #{set_commandline} --wait --timeout #{timeout}")
+end
+
+task :get_deployment_status do 
+
+  options = {"helm_name" => helm_name , 
+             "namespace" => get_namespace(), 
+             "context" => get_context(),
+             "max_iterations" => iterations,
+             "sleep_time" => sleep_time
+            }
+  pod = Pod.new(options) 
+  result = pod.is_pod_deployment_successful() 
+  if(result == false)
+    log("This deployment has failed")
+    exit 1
+  end 
+end
+
+
